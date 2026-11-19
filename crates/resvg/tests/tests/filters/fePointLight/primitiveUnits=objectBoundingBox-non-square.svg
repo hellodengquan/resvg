@@ -1,0 +1,25 @@
+<svg id="svg1" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+    <title>primitiveUnits=objectBoundingBox with a non-square bbox</title>
+    <desc>
+        A point light at bbox fraction (0.25, 0.75) over a non-square
+        160x80 object bounding box. The x and y coordinates are fractions
+        of the corresponding bbox dimensions and z uses the normalized
+        bbox diagonal, so the lighting stays anchored to the same relative
+        position regardless of the bbox aspect ratio.
+    </desc>
+
+    <radialGradient id="rg1" r="0.5">
+        <stop offset="0.5" stop-color="white"/>
+        <stop offset="1" stop-color="black" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="filter1" color-interpolation-filters="sRGB" primitiveUnits="objectBoundingBox">
+        <feDiffuseLighting>
+            <fePointLight x="0.25" y="0.75" z="0.2"/>
+        </feDiffuseLighting>
+    </filter>
+    <rect id="rect1" x="20" y="60" width="160" height="80"
+          fill="url(#rg1)" filter="url(#filter1)"/>
+
+    <!-- image frame -->
+    <rect id="frame" x="1" y="1" width="198" height="198" fill="none" stroke="black"/>
+</svg>

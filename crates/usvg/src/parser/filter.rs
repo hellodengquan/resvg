@@ -328,33 +328,37 @@ fn collect_children(
                 None => break,
             };
 
-        let kind =
-            match tag_name {
-                EId::FeDropShadow => convert_drop_shadow(child, scale, &primitives),
-                EId::FeGaussianBlur => convert_gaussian_blur(child, scale, &primitives),
-                EId::FeOffset => convert_offset(child, scale, &primitives),
-                EId::FeBlend => convert_blend(child, &primitives),
-                EId::FeFlood => convert_flood(child),
-                EId::FeComposite => convert_composite(child, &primitives),
-                EId::FeMerge => convert_merge(child, &primitives),
-                EId::FeTile => convert_tile(child, &primitives),
-                EId::FeImage => convert_image(child, filter_subregion, state, cache),
-                EId::FeComponentTransfer => convert_component_transfer(child, &primitives),
-                EId::FeColorMatrix => convert_color_matrix(child, &primitives),
-                EId::FeConvolveMatrix => convert_convolve_matrix(child, &primitives)
-                    .unwrap_or_else(create_dummy_primitive),
-                EId::FeMorphology => convert_morphology(child, scale, &primitives),
-                EId::FeDisplacementMap => convert_displacement_map(child, scale, &primitives),
-                EId::FeTurbulence => convert_turbulence(child),
-                EId::FeDiffuseLighting => convert_diffuse_lighting(child, &primitives)
-                    .unwrap_or_else(create_dummy_primitive),
-                EId::FeSpecularLighting => convert_specular_lighting(child, &primitives)
-                    .unwrap_or_else(create_dummy_primitive),
-                tag_name => {
-                    log::warn!("'{}' is not a valid filter primitive. Skipped.", tag_name);
-                    continue;
-                }
-            };
+        let kind = match tag_name {
+            EId::FeDropShadow => convert_drop_shadow(child, scale, &primitives),
+            EId::FeGaussianBlur => convert_gaussian_blur(child, scale, &primitives),
+            EId::FeOffset => convert_offset(child, scale, &primitives),
+            EId::FeBlend => convert_blend(child, &primitives),
+            EId::FeFlood => convert_flood(child),
+            EId::FeComposite => convert_composite(child, &primitives),
+            EId::FeMerge => convert_merge(child, &primitives),
+            EId::FeTile => convert_tile(child, &primitives),
+            EId::FeImage => convert_image(child, filter_subregion, state, cache),
+            EId::FeComponentTransfer => convert_component_transfer(child, &primitives),
+            EId::FeColorMatrix => convert_color_matrix(child, &primitives),
+            EId::FeConvolveMatrix => {
+                convert_convolve_matrix(child, &primitives).unwrap_or_else(create_dummy_primitive)
+            }
+            EId::FeMorphology => convert_morphology(child, scale, &primitives),
+            EId::FeDisplacementMap => convert_displacement_map(child, scale, &primitives),
+            EId::FeTurbulence => convert_turbulence(child),
+            EId::FeDiffuseLighting => {
+                convert_diffuse_lighting(child, units, object_bbox, &primitives)
+                    .unwrap_or_else(create_dummy_primitive)
+            }
+            EId::FeSpecularLighting => {
+                convert_specular_lighting(child, units, object_bbox, &primitives)
+                    .unwrap_or_else(create_dummy_primitive)
+            }
+            tag_name => {
+                log::warn!("'{}' is not a valid filter primitive. Skipped.", tag_name);
+                continue;
+            }
+        };
 
         let color_interpolation = child
             .find_attribute(AId::ColorInterpolationFilters)
@@ -740,14 +744,16 @@ fn convert_displacement_map(fe: SvgNode, scale: Size, primitives: &[Primitive]) 
         _ => ColorChannel::A,
     };
 
-    // TODO: should probably split scale to scale_x and scale_y
-    //       to handle `primitiveUnits=objectBoundingBox` with a non-square bbox.
-    let scale = (scale.width() + scale.height()) / 2.0;
+    // With `primitiveUnits="objectBoundingBox"` the displacement scale is a
+    // fraction of the object bounding box, so the horizontal and vertical
+    // components have to be resolved against the corresponding bbox dimensions.
+    let scale_value = fe.attribute(AId::Scale).unwrap_or(0.0);
 
     Kind::DisplacementMap(DisplacementMap {
         input1: resolve_input(fe, AId::In, primitives),
         input2: resolve_input(fe, AId::In2, primitives),
-        scale: fe.attribute(AId::Scale).unwrap_or(0.0) * scale,
+        scale_x: scale_value * scale.width(),
+        scale_y: scale_value * scale.height(),
         x_channel_selector: parse_channel(AId::XChannelSelector),
         y_channel_selector: parse_channel(AId::YChannelSelector),
     })
@@ -904,8 +910,13 @@ fn convert_image_inner(
     Some(Kind::Image(Image { root }))
 }
 
-fn convert_diffuse_lighting(fe: SvgNode, primitives: &[Primitive]) -> Option<Kind> {
-    let light_source = convert_light_source(fe)?;
+fn convert_diffuse_lighting(
+    fe: SvgNode,
+    units: Units,
+    object_bbox: Option<NonZeroRect>,
+    primitives: &[Primitive],
+) -> Option<Kind> {
+    let light_source = convert_light_source(fe, units, object_bbox)?;
     Some(Kind::DiffuseLighting(DiffuseLighting {
         input: resolve_input(fe, AId::In, primitives),
         surface_scale: fe.attribute(AId::SurfaceScale).unwrap_or(1.0),
@@ -915,8 +926,13 @@ fn convert_diffuse_lighting(fe: SvgNode, primitives: &[Primitive]) -> Option<Kin
     }))
 }
 
-fn convert_specular_lighting(fe: SvgNode, primitives: &[Primitive]) -> Option<Kind> {
-    let light_source = convert_light_source(fe)?;
+fn convert_specular_lighting(
+    fe: SvgNode,
+    units: Units,
+    object_bbox: Option<NonZeroRect>,
+    primitives: &[Primitive],
+) -> Option<Kind> {
+    let light_source = convert_light_source(fe, units, object_bbox)?;
 
     let specular_exponent = fe.attribute(AId::SpecularExponent).unwrap_or(1.0);
     if !(1.0..=128.0).contains(&specular_exponent) {
@@ -944,7 +960,11 @@ fn convert_lighting_color(node: SvgNode) -> Color {
 }
 
 #[inline(never)]
-fn convert_light_source(parent: SvgNode) -> Option<LightSource> {
+fn convert_light_source(
+    parent: SvgNode,
+    units: Units,
+    object_bbox: Option<NonZeroRect>,
+) -> Option<LightSource> {
     let child = parent.children().find(|n| {
         matches!(
             n.tag_name(),
@@ -957,17 +977,25 @@ fn convert_light_source(parent: SvgNode) -> Option<LightSource> {
             azimuth: child.attribute(AId::Azimuth).unwrap_or(0.0),
             elevation: child.attribute(AId::Elevation).unwrap_or(0.0),
         })),
-        Some(EId::FePointLight) => Some(LightSource::PointLight(PointLight {
-            x: child.attribute(AId::X).unwrap_or(0.0),
-            y: child.attribute(AId::Y).unwrap_or(0.0),
-            z: child.attribute(AId::Z).unwrap_or(0.0),
-        })),
+        Some(EId::FePointLight) => {
+            let mut light = PointLight {
+                x: child.attribute(AId::X).unwrap_or(0.0),
+                y: child.attribute(AId::Y).unwrap_or(0.0),
+                z: child.attribute(AId::Z).unwrap_or(0.0),
+            };
+            if units == Units::ObjectBoundingBox {
+                if let Some(bbox) = object_bbox {
+                    convert_point_light_units(&mut light, bbox);
+                }
+            }
+            Some(LightSource::PointLight(light))
+        }
         Some(EId::FeSpotLight) => {
             let specular_exponent = child.attribute(AId::SpecularExponent).unwrap_or(1.0);
             let specular_exponent = PositiveF32::new(specular_exponent)
                 .unwrap_or_else(|| PositiveF32::new(1.0).unwrap());
 
-            Some(LightSource::SpotLight(SpotLight {
+            let mut light = SpotLight {
                 x: child.attribute(AId::X).unwrap_or(0.0),
                 y: child.attribute(AId::Y).unwrap_or(0.0),
                 z: child.attribute(AId::Z).unwrap_or(0.0),
@@ -976,10 +1004,53 @@ fn convert_light_source(parent: SvgNode) -> Option<LightSource> {
                 points_at_z: child.attribute(AId::PointsAtZ).unwrap_or(0.0),
                 specular_exponent,
                 limiting_cone_angle: child.attribute(AId::LimitingConeAngle),
-            }))
+            };
+            if units == Units::ObjectBoundingBox {
+                if let Some(bbox) = object_bbox {
+                    convert_spot_light_units(&mut light, bbox);
+                }
+            }
+            Some(LightSource::SpotLight(light))
         }
         _ => None,
     }
+}
+
+/// Converts a point light position from object bounding box units into
+/// the current user coordinate system.
+///
+/// The `x` and `y` components are fractions of the corresponding bbox
+/// dimensions, offset by the bbox position, while `z` is a fraction of
+/// the normalized diagonal of the bounding box:
+/// `sqrt(width² + height²) / sqrt(2)`.
+fn convert_point_light_units(light: &mut PointLight, bbox: NonZeroRect) {
+    let z_scale = normalized_diagonal(bbox);
+    light.x = bbox.x() + light.x * bbox.width();
+    light.y = bbox.y() + light.y * bbox.height();
+    light.z *= z_scale;
+}
+
+/// Converts a spot light position and pointing target from object bounding
+/// box units into the current user coordinate system.
+///
+/// See [`convert_point_light_units`] for the component conversion rules.
+fn convert_spot_light_units(light: &mut SpotLight, bbox: NonZeroRect) {
+    let z_scale = normalized_diagonal(bbox);
+    light.x = bbox.x() + light.x * bbox.width();
+    light.y = bbox.y() + light.y * bbox.height();
+    light.z *= z_scale;
+    light.points_at_x = bbox.x() + light.points_at_x * bbox.width();
+    light.points_at_y = bbox.y() + light.points_at_y * bbox.height();
+    light.points_at_z *= z_scale;
+}
+
+/// The bounding box diagonal normalized by `sqrt(2)`, which is used as the
+/// unit length for the Z components of point and spot lights.
+///
+/// For a square bounding box this is simply the side length, so Z values use
+/// the same unit length as X and Y in that case.
+fn normalized_diagonal(bbox: NonZeroRect) -> f32 {
+    (bbox.width() * bbox.width() + bbox.height() * bbox.height()).sqrt() / core::f32::consts::SQRT_2
 }
 
 fn convert_merge(fe: SvgNode, primitives: &[Primitive]) -> Kind {

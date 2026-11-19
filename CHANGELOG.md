@@ -17,6 +17,14 @@ This changelog also contains important changes in dependencies.
 
 ### Fixed
 
+- Filters with `primitiveUnits="objectBoundingBox"` now resolve point and spot light coordinates
+  against the element's bounding box: the `x`/`y` position and the spot light target point are
+  fractions of the bbox dimensions, while `z` is a fraction of its normalized diagonal
+  (`sqrt(width² + height²) / sqrt(2)`). The lights were previously interpreted as literal user
+  units, ignoring the bounding box.
+- `feDisplacementMap` with `primitiveUnits="objectBoundingBox"` now resolves the displacement
+  `scale` separately against the horizontal and vertical bounding box dimensions, instead of
+  averaging the two. `usvg::filter::DisplacementMap` exposes `scale_x` and `scale_y`.
 - Orientation of `orient="auto"` markers next to Bézier control points that coincide with their
   vertex, at the shared vertex of closed subpaths, and next to zero-length segments. (#1173)
 - Default filter primitive subregion: a primitive without `x`, `y`, `width` or `height` now uses

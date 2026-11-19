@@ -407,7 +407,11 @@ fn write_filters(tree: &Tree, opt: &WriteOptions, xml: &mut XmlWriter) {
                     xml.write_filter_input(AId::In2, &map.input2);
                     xml.write_svg_attribute(AId::Result, &fe.result);
 
-                    xml.write_svg_attribute(AId::Scale, &map.scale);
+                    // `scale` accepts a single value only. The tree keeps the X
+                    // and Y factors separately to support non-square object
+                    // bounding boxes, but the written filter always uses
+                    // userSpaceOnUse units, where both factors are identical.
+                    xml.write_svg_attribute(AId::Scale, &map.scale_x);
 
                     let mut write_channel = |c, aid| {
                         xml.write_svg_attribute(

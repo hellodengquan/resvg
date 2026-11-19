@@ -969,7 +969,7 @@ fn apply_displacement_map(
 
     let mut pixmap = tiny_skia::Pixmap::try_create(region.width(), region.height())?;
 
-    let (sx, sy) = match scale_coordinates(fe.scale(), fe.scale(), ts) {
+    let (sx, sy) = match scale_coordinates(fe.scale_x(), fe.scale_y(), ts) {
         Some(v) => v,
         None => return Ok(Image::from_image(pixmap1, cs)),
     };

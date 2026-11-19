@@ -145,6 +145,7 @@ use crate::render;
 #[test] fn filters_feDiffuseLighting_surfaceScale_eq_1_33() { assert_eq!(render("tests/filters/feDiffuseLighting/surfaceScale=1.33"), 0); }
 #[test] fn filters_feDiffuseLighting_surfaceScale_eq_5() { assert_eq!(render("tests/filters/feDiffuseLighting/surfaceScale=5"), 0); }
 #[test] fn filters_feDiffuseLighting_tiny_element_with_spot_light() { assert_eq!(render("tests/filters/feDiffuseLighting/tiny-element-with-spot-light"), 0); }
+#[test] fn filters_feDisplacementMap_primitiveUnits_eq_objectBoundingBox() { assert_eq!(render("tests/filters/feDisplacementMap/primitiveUnits=objectBoundingBox"), 0); }
 #[test] fn filters_feDisplacementMap_semi_transparent_map() { assert_eq!(render("tests/filters/feDisplacementMap/semi-transparent-map"), 0); }
 #[test] fn filters_feDisplacementMap_simple_case() { assert_eq!(render("tests/filters/feDisplacementMap/simple-case"), 0); }
 #[test] fn filters_feDisplacementMap_uniform_map() { assert_eq!(render("tests/filters/feDisplacementMap/uniform-map"), 0); }
@@ -244,6 +245,7 @@ use crate::render;
 #[test] fn filters_fePointLight_custom_attributes() { assert_eq!(render("tests/filters/fePointLight/custom-attributes"), 0); }
 #[test] fn filters_fePointLight_default_attributes() { assert_eq!(render("tests/filters/fePointLight/default-attributes"), 0); }
 #[test] fn filters_fePointLight_primitiveUnits_eq_objectBoundingBox() { assert_eq!(render("tests/filters/fePointLight/primitiveUnits=objectBoundingBox"), 0); }
+#[test] fn filters_fePointLight_primitiveUnits_eq_objectBoundingBox_non_square() { assert_eq!(render("tests/filters/fePointLight/primitiveUnits=objectBoundingBox-non-square"), 0); }
 #[test] fn filters_feSpecularLighting_lighting_color_eq_hsla() { assert_eq!(render("tests/filters/feSpecularLighting/lighting-color=hsla"), 0); }
 #[test] fn filters_feSpecularLighting_specularExponent_eq_0() { assert_eq!(render("tests/filters/feSpecularLighting/specularExponent=0"), 0); }
 #[test] fn filters_feSpecularLighting_specularExponent_eq_256() { assert_eq!(render("tests/filters/feSpecularLighting/specularExponent=256"), 0); }

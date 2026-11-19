@@ -495,7 +495,14 @@ pub enum EdgeMode {
 pub struct DisplacementMap {
     pub(crate) input1: Input,
     pub(crate) input2: Input,
-    pub(crate) scale: f32,
+    /// Scale factor along the X-axis.
+    ///
+    /// `scale` in the SVG, already converted into user units along the X-axis.
+    pub(crate) scale_x: f32,
+    /// Scale factor along the Y-axis.
+    ///
+    /// `scale` in the SVG, already converted into user units along the Y-axis.
+    pub(crate) scale_y: f32,
     pub(crate) x_channel_selector: ColorChannel,
     pub(crate) y_channel_selector: ColorChannel,
 }
@@ -515,11 +522,24 @@ impl DisplacementMap {
         &self.input2
     }
 
-    /// Scale factor.
+    /// Scale factor along the X-axis.
     ///
-    /// `scale` in the SVG.
-    pub fn scale(&self) -> f32 {
-        self.scale
+    /// The `scale` attribute converted into the current user coordinate
+    /// system. With `primitiveUnits="objectBoundingBox"` the X and Y scale
+    /// factors can differ, because each one is resolved against the
+    /// corresponding bounding box dimension.
+    pub fn scale_x(&self) -> f32 {
+        self.scale_x
+    }
+
+    /// Scale factor along the Y-axis.
+    ///
+    /// The `scale` attribute converted into the current user coordinate
+    /// system. With `primitiveUnits="objectBoundingBox"` the X and Y scale
+    /// factors can differ, because each one is resolved against the
+    /// corresponding bounding box dimension.
+    pub fn scale_y(&self) -> f32 {
+        self.scale_y
     }
 
     /// Indicates a source color channel along the X-axis.
