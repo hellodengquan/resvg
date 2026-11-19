@@ -3,7 +3,6 @@
 
 use std::sync::Arc;
 
-use kurbo::{ParamCurve, ParamCurveArclen};
 use svgtypes::{FontFamily, Length, LengthUnit, parse_font_families};
 
 use super::svgtree::{AId, EId, FromValue, SvgNode};
@@ -367,16 +366,23 @@ fn resolve_text_flow(
     state: &converter::State,
     cache: &mut converter::Cache,
 ) -> Option<TextFlow> {
-    let (id, path) = resolve_text_flow_path(node, state, cache)?;
+    let (id, path, path_length_scale) = resolve_text_flow_path(node, state, cache)?;
 
     let start_offset: Length = node.attribute(AId::StartOffset).unwrap_or_default();
     let start_offset = if start_offset.unit == LengthUnit::Percent {
         // 'If a percentage is given, then the `startOffset` represents
         // a percentage distance along the entire path.'
-        let path_len = path_length(&path);
+        //
+        // `pathLength` has no effect on percentage distance-along-a-path
+        // calculations.
+        let path_len = super::shapes::path_length(&path);
         (path_len * (start_offset.number / 100.0)) as f32
     } else {
-        node.resolve_length(AId::StartOffset, state, 0.0)
+        let start_offset = node.resolve_length(AId::StartOffset, state, 0.0);
+        match path_length_scale {
+            Some(scale) => super::shapes::scale_path_distance(start_offset, scale),
+            None => start_offset,
+        }
     };
 
     Some(TextFlow::Path(Arc::new(TextPath {
@@ -390,14 +396,15 @@ fn resolve_text_flow_path(
     node: SvgNode,
     state: &converter::State,
     cache: &mut converter::Cache,
-) -> Option<(NonEmptyString, Arc<tiny_skia_path::Path>)> {
+) -> Option<(NonEmptyString, Arc<tiny_skia_path::Path>, Option<f32>)> {
     // `path` takes precedence over `href`, unless it yields no path data.
     if let Some(path_data) = node.attribute::<&str>(AId::Path) {
         if let Some(path) = super::shapes::convert_path_data(path_data) {
             // The writer references text paths by ID, so an inline path needs one too.
             let id = NonEmptyString::new(node.element_id().to_string())
                 .unwrap_or_else(|| cache.gen_text_path_id());
-            return Some((id, path));
+            // `pathLength` cannot be set on an inline text path.
+            return Some((id, path, None));
         }
     }
 
@@ -407,7 +414,7 @@ fn resolve_text_flow_path(
 fn resolve_text_flow_href(
     node: SvgNode,
     state: &converter::State,
-) -> Option<(NonEmptyString, Arc<tiny_skia_path::Path>)> {
+) -> Option<(NonEmptyString, Arc<tiny_skia_path::Path>, Option<f32>)> {
     let linked_node = node.attribute::<SvgNode>(AId::Href)?;
     let path = super::shapes::convert(linked_node, state)?;
 
@@ -421,8 +428,12 @@ fn resolve_text_flow_href(
         path
     };
 
+    // Distance-along-a-path computations have to be scaled
+    // according to the referenced element's `pathLength`.
+    let path_length_scale = super::shapes::path_length_scale(linked_node, &path);
+
     let id = NonEmptyString::new(linked_node.element_id().to_string())?;
-    Some((id, path))
+    Some((id, path, path_length_scale))
 }
 
 fn convert_font(node: SvgNode, state: &converter::State) -> Font {
@@ -938,58 +949,4 @@ fn convert_writing_mode(text_node: SvgNode) -> WritingMode {
     } else {
         WritingMode::LeftToRight
     }
-}
-
-fn path_length(path: &tiny_skia_path::Path) -> f64 {
-    let mut prev_mx = path.points()[0].x;
-    let mut prev_my = path.points()[0].y;
-    let mut prev_x = prev_mx;
-    let mut prev_y = prev_my;
-
-    fn create_curve_from_line(px: f32, py: f32, x: f32, y: f32) -> kurbo::CubicBez {
-        let line = kurbo::Line::new(
-            kurbo::Point::new(px as f64, py as f64),
-            kurbo::Point::new(x as f64, y as f64),
-        );
-        let p1 = line.eval(0.33);
-        let p2 = line.eval(0.66);
-        kurbo::CubicBez::new(line.p0, p1, p2, line.p1)
-    }
-
-    let mut length = 0.0;
-    for seg in path.segments() {
-        let curve = match seg {
-            tiny_skia_path::PathSegment::MoveTo(p) => {
-                prev_mx = p.x;
-                prev_my = p.y;
-                prev_x = p.x;
-                prev_y = p.y;
-                continue;
-            }
-            tiny_skia_path::PathSegment::LineTo(p) => {
-                create_curve_from_line(prev_x, prev_y, p.x, p.y)
-            }
-            tiny_skia_path::PathSegment::QuadTo(p1, p) => kurbo::QuadBez::new(
-                kurbo::Point::new(prev_x as f64, prev_y as f64),
-                kurbo::Point::new(p1.x as f64, p1.y as f64),
-                kurbo::Point::new(p.x as f64, p.y as f64),
-            )
-            .raise(),
-            tiny_skia_path::PathSegment::CubicTo(p1, p2, p) => kurbo::CubicBez::new(
-                kurbo::Point::new(prev_x as f64, prev_y as f64),
-                kurbo::Point::new(p1.x as f64, p1.y as f64),
-                kurbo::Point::new(p2.x as f64, p2.y as f64),
-                kurbo::Point::new(p.x as f64, p.y as f64),
-            ),
-            tiny_skia_path::PathSegment::Close => {
-                create_curve_from_line(prev_x, prev_y, prev_mx, prev_my)
-            }
-        };
-
-        length += curve.arclen(0.5);
-        prev_x = curve.p3.x as f32;
-        prev_y = curve.p3.y as f32;
-    }
-
-    length
 }

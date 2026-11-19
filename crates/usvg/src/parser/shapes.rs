@@ -28,6 +28,115 @@ pub(crate) fn convert_path(node: SvgNode) -> Option<Arc<Path>> {
     convert_path_data(value)
 }
 
+/// Computes the scaling factor for distance-along-a-path computations
+/// derived from the `pathLength` attribute.
+///
+/// The `pathLength` attribute holds the author's computation of the total
+/// length of the path. All distance-along-a-path computations (like
+/// `stroke-dasharray`, `stroke-dashoffset` and text-on-a-path offsets)
+/// must be scaled by the ratio of the actual path length to the declared one.
+///
+/// Returns `None` when the attribute is absent or invalid, in which case
+/// no scaling should be applied. A negative value is an error and must be
+/// ignored. A value of zero is valid and must be treated as a scaling
+/// factor of infinity.
+///
+/// See <https://www.w3.org/TR/SVG2/paths.html#PathLengthAttribute> for details.
+pub(crate) fn path_length_scale(node: SvgNode, path: &Path) -> Option<f32> {
+    let declared: f32 = node.attribute(AId::PathLength)?;
+
+    // `A negative value is an error.`
+    if declared.is_sign_negative() {
+        log::warn!(
+            "'{}' has a negative 'pathLength' value. Ignored.",
+            node.element_id()
+        );
+        return None;
+    }
+
+    // `A value of zero is valid and must be treated as a scaling factor of infinity.`
+    if declared == 0.0 {
+        return Some(f32::INFINITY);
+    }
+
+    let actual = path_length(path) as f32;
+    Some(actual / declared)
+}
+
+/// Scales a distance-along-a-path value by the `pathLength` scaling factor.
+///
+/// A value of zero scaled infinitely must remain zero, while any
+/// non-percentage value greater than zero must become +Infinity
+/// (and respectively -Infinity for negative values).
+pub(crate) fn scale_path_distance(value: f32, scale: f32) -> f32 {
+    if scale.is_infinite() && value == 0.0 {
+        0.0
+    } else {
+        value * scale
+    }
+}
+
+/// Computes the total length of the path.
+pub(crate) fn path_length(path: &Path) -> f64 {
+    use kurbo::{ParamCurve, ParamCurveArclen};
+
+    if path.points().is_empty() {
+        return 0.0;
+    }
+
+    let mut prev_mx = path.points()[0].x;
+    let mut prev_my = path.points()[0].y;
+    let mut prev_x = prev_mx;
+    let mut prev_y = prev_my;
+
+    fn create_curve_from_line(px: f32, py: f32, x: f32, y: f32) -> kurbo::CubicBez {
+        let line = kurbo::Line::new(
+            kurbo::Point::new(px as f64, py as f64),
+            kurbo::Point::new(x as f64, y as f64),
+        );
+        let p1 = line.eval(0.33);
+        let p2 = line.eval(0.66);
+        kurbo::CubicBez::new(line.p0, p1, p2, line.p1)
+    }
+
+    let mut length = 0.0;
+    for seg in path.segments() {
+        let curve = match seg {
+            tiny_skia_path::PathSegment::MoveTo(p) => {
+                prev_mx = p.x;
+                prev_my = p.y;
+                prev_x = p.x;
+                prev_y = p.y;
+                continue;
+            }
+            tiny_skia_path::PathSegment::LineTo(p) => {
+                create_curve_from_line(prev_x, prev_y, p.x, p.y)
+            }
+            tiny_skia_path::PathSegment::QuadTo(p1, p) => kurbo::QuadBez::new(
+                kurbo::Point::new(prev_x as f64, prev_y as f64),
+                kurbo::Point::new(p1.x as f64, p1.y as f64),
+                kurbo::Point::new(p.x as f64, p.y as f64),
+            )
+            .raise(),
+            tiny_skia_path::PathSegment::CubicTo(p1, p2, p) => kurbo::CubicBez::new(
+                kurbo::Point::new(prev_x as f64, prev_y as f64),
+                kurbo::Point::new(p1.x as f64, p1.y as f64),
+                kurbo::Point::new(p2.x as f64, p2.y as f64),
+                kurbo::Point::new(p.x as f64, p.y as f64),
+            ),
+            tiny_skia_path::PathSegment::Close => {
+                create_curve_from_line(prev_x, prev_y, prev_mx, prev_my)
+            }
+        };
+
+        length += curve.arclen(0.5);
+        prev_x = curve.p3.x as f32;
+        prev_y = curve.p3.y as f32;
+    }
+
+    length
+}
+
 pub(crate) fn convert_path_data(value: &str) -> Option<Arc<Path>> {
     let mut builder = tiny_skia_path::PathBuilder::new();
     for segment in svgtypes::SimplifyingPathParser::from(value) {

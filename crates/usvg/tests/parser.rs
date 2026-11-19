@@ -770,3 +770,138 @@ fn long_clip_path_chain() {
 
     assert!(usvg::Tree::from_str(&svg, &usvg::Options::default()).is_ok());
 }
+
+#[test]
+fn path_length_scales_stroke_dash() {
+    let svg = "
+    <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
+        <path id='p1' d='M 0 0 L 100 0' pathLength='50' fill='none' stroke='black' stroke-dasharray='5 3' stroke-dashoffset='2'/>
+        <path id='p2' d='M 0 0 L 100 0' fill='none' stroke='black' stroke-dasharray='5 3' stroke-dashoffset='2'/>
+    </svg>
+    ";
+
+    let tree = usvg::Tree::from_str(&svg, &usvg::Options::default()).unwrap();
+
+    // The actual length is 100 and the declared one is 50,
+    // so distances along the path must be scaled by 2.
+    let usvg::Node::Path(path) = &tree.root().children()[0] else {
+        unreachable!()
+    };
+    let stroke = path.stroke().unwrap();
+    assert_eq!(stroke.dasharray(), Some(&[10.0, 6.0][..]));
+    assert_eq!(stroke.dashoffset(), 4.0);
+
+    // Without `pathLength`, values must be preserved as is.
+    let usvg::Node::Path(path) = &tree.root().children()[1] else {
+        unreachable!()
+    };
+    let stroke = path.stroke().unwrap();
+    assert_eq!(stroke.dasharray(), Some(&[5.0, 3.0][..]));
+    assert_eq!(stroke.dashoffset(), 2.0);
+}
+
+#[test]
+fn path_length_on_basic_shapes() {
+    let svg = "
+    <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
+        <rect id='r1' width='10' height='10' pathLength='20' fill='none' stroke='black' stroke-dasharray='2'/>
+        <line id='l1' x2='100' pathLength='200' fill='none' stroke='black' stroke-dasharray='4' stroke-dashoffset='1'/>
+    </svg>
+    ";
+
+    let tree = usvg::Tree::from_str(&svg, &usvg::Options::default()).unwrap();
+
+    // The rect perimeter is 40 and the declared length is 20 -> scale by 2.
+    // An odd dasharray is duplicated first and only then scaled.
+    let usvg::Node::Path(path) = &tree.root().children()[0] else {
+        unreachable!()
+    };
+    let stroke = path.stroke().unwrap();
+    assert_eq!(stroke.dasharray(), Some(&[4.0, 4.0][..]));
+
+    // The line length is 100 and the declared length is 200 -> scale by 0.5.
+    let usvg::Node::Path(path) = &tree.root().children()[1] else {
+        unreachable!()
+    };
+    let stroke = path.stroke().unwrap();
+    assert_eq!(stroke.dasharray(), Some(&[2.0, 2.0][..]));
+    assert_eq!(stroke.dashoffset(), 0.5);
+}
+
+#[test]
+fn path_length_zero() {
+    let svg = "
+    <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
+        <path id='p1' d='M 0 0 L 100 0' pathLength='0' fill='none' stroke='black' stroke-dasharray='5 0' stroke-dashoffset='3'/>
+    </svg>
+    ";
+
+    let tree = usvg::Tree::from_str(&svg, &usvg::Options::default()).unwrap();
+
+    // A zero `pathLength` is a scaling factor of infinity:
+    // zero stays zero, any positive value becomes +Infinity.
+    let usvg::Node::Path(path) = &tree.root().children()[0] else {
+        unreachable!()
+    };
+    let stroke = path.stroke().unwrap();
+    let dasharray = stroke.dasharray().unwrap();
+    assert!(dasharray[0].is_infinite() && dasharray[0].is_sign_positive());
+    assert_eq!(dasharray[1], 0.0);
+    assert!(stroke.dashoffset().is_infinite() && stroke.dashoffset().is_sign_positive());
+}
+
+#[test]
+fn path_length_negative_is_ignored() {
+    let svg = "
+    <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
+        <path id='p1' d='M 0 0 L 100 0' pathLength='-50' fill='none' stroke='black' stroke-dasharray='5 3' stroke-dashoffset='2'/>
+    </svg>
+    ";
+
+    let tree = usvg::Tree::from_str(&svg, &usvg::Options::default()).unwrap();
+
+    // A negative `pathLength` is an error and must be ignored.
+    let usvg::Node::Path(path) = &tree.root().children()[0] else {
+        unreachable!()
+    };
+    let stroke = path.stroke().unwrap();
+    assert_eq!(stroke.dasharray(), Some(&[5.0, 3.0][..]));
+    assert_eq!(stroke.dashoffset(), 2.0);
+}
+
+#[test]
+fn path_length_scales_text_path_start_offset() {
+    let svg = "
+    <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'>
+        <path id='p1' d='M 0 0 L 100 0' pathLength='50'/>
+        <text><textPath href='#p1' startOffset='10'>text</textPath></text>
+        <text><textPath href='#p1' startOffset='25%'>text</textPath></text>
+    </svg>
+    ";
+
+    let mut opts = usvg::Options::default();
+    opts.fontdb_mut()
+        .load_fonts_dir(env!("CARGO_MANIFEST_DIR").to_string() + "/../resvg/tests/fonts");
+    opts.font_family = "Noto Sans".to_string();
+
+    let tree = usvg::Tree::from_str(&svg, &opts).unwrap();
+
+    // The actual length is 100 and the declared one is 50,
+    // so a non-percentage `startOffset` must be scaled by 2.
+    let usvg::Node::Text(text) = &tree.root().children()[1] else {
+        unreachable!()
+    };
+    let usvg::TextFlow::Path(text_path) = text.chunks()[0].text_flow() else {
+        unreachable!()
+    };
+    assert_eq!(text_path.start_offset(), 20.0);
+
+    // Percentage offsets are not affected by `pathLength`.
+    let usvg::Node::Text(text) = &tree.root().children()[2] else {
+        unreachable!()
+    };
+    let usvg::TextFlow::Path(text_path) = text.chunks()[0].text_flow() else {
+        unreachable!()
+    };
+    assert_eq!(text_path.start_offset(), 25.0);
+}

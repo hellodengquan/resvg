@@ -827,6 +827,18 @@ fn convert_path(
     let has_bbox = tiny_skia_path.bounds().width() > 0.0 && tiny_skia_path.bounds().height() > 0.0;
     let mut fill = super::style::resolve_fill(node, has_bbox, state, cache);
     let mut stroke = super::style::resolve_stroke(node, has_bbox, state, cache);
+
+    // Scale distance-along-a-path stroke properties according to `pathLength`.
+    if let Some(stroke) = stroke.as_mut() {
+        if let Some(scale) = super::shapes::path_length_scale(node, &tiny_skia_path) {
+            if let Some(dasharray) = stroke.dasharray.as_mut() {
+                for value in dasharray.iter_mut() {
+                    *value = super::shapes::scale_path_distance(*value, scale);
+                }
+            }
+            stroke.dashoffset = super::shapes::scale_path_distance(stroke.dashoffset, scale);
+        }
+    }
     let visibility: Visibility = node.find_attribute(AId::Visibility).unwrap_or_default();
     let mut visible = visibility == Visibility::Visible;
     let rendering_mode: ShapeRendering = node
