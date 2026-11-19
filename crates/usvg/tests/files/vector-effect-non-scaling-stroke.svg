@@ -1,0 +1,6 @@
+<svg width="200" height="200" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <g transform="scale(2)">
+        <path d="M 5 10 L 45 10" stroke="red" stroke-width="3" vector-effect="non-scaling-stroke"/>
+        <path d="M 5 20 L 45 20" stroke="blue" stroke-width="3"/>
+    </g>
+</svg>

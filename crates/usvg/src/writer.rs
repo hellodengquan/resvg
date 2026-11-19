@@ -1328,6 +1328,10 @@ fn write_stroke(stroke: &Option<Stroke>, opt: &WriteOptions, xml: &mut XmlWriter
         if let Some(ref array) = stroke.dasharray {
             xml.write_numbers(AId::StrokeDasharray, array);
         }
+
+        if stroke.non_scaling {
+            xml.write_svg_attribute(AId::VectorEffect, "non-scaling-stroke");
+        }
     } else {
         // Always set `stroke` to `none` to override the parent value.
         // In 99.9% of the cases it's redundant, but a group with `filter` with `StrokePaint`

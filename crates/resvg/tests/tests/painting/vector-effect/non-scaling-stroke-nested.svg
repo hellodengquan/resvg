@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 100 100">
+  <defs>
+    <g id="box">
+      <rect x="0" y="0" width="30" height="20" fill="none" stroke="black" stroke-width="2"
+            vector-effect="non-scaling-stroke"/>
+    </g>
+  </defs>
+  <!-- Nested transforms: opacity group wrapping a scaling group. -->
+  <g opacity="0.9">
+    <g transform="translate(10,10) scale(3)">
+      <use href="#box"/>
+    </g>
+  </g>
+  <!-- A non-scaling stroke inside a skewed group keeps a uniform thickness. -->
+  <g transform="translate(20,120) skewX(20) scale(2)">
+    <rect x="0" y="0" width="30" height="15" fill="none" stroke="red" stroke-width="2"
+          vector-effect="non-scaling-stroke"/>
+  </g>
+</svg>

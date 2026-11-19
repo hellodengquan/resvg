@@ -121,6 +121,17 @@ pub(crate) fn resolve_stroke(
         .find_attribute::<Opacity>(AId::StrokeOpacity)
         .unwrap_or(Opacity::ONE);
 
+    // `vector-effect` is not inherited (see SVG spec), so only the element's
+    // own attribute is considered. The value is a space-separated list of
+    // keywords, from which only `non-scaling-stroke` is supported.
+    let non_scaling = node
+        .attribute::<&str>(AId::VectorEffect)
+        .is_some_and(|value| {
+            value
+                .split([' ', ',', '\t', '\n', '\r'])
+                .any(|keyword| keyword == "non-scaling-stroke")
+        });
+
     let stroke = Stroke {
         paint,
         dasharray: conv_dasharray(node, state),
@@ -131,6 +142,7 @@ pub(crate) fn resolve_stroke(
         linecap: node.find_attribute(AId::StrokeLinecap).unwrap_or_default(),
         linejoin: node.find_attribute(AId::StrokeLinejoin).unwrap_or_default(),
         context_element,
+        non_scaling,
     };
 
     Some(stroke)

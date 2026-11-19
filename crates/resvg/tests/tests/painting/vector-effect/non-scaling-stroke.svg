@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 100 100">
+  <!-- A regular stroke scales with the group transform (4 user units -> 8 device px). -->
+  <g transform="scale(2)">
+    <line x1="5" y1="15" x2="90" y2="15" stroke="black" stroke-width="4"/>
+    <!-- A non-scaling stroke keeps its width in device coordinates (4 device px). -->
+    <line x1="5" y1="35" x2="90" y2="35" stroke="black" stroke-width="4"
+          vector-effect="non-scaling-stroke"/>
+    <!-- Caps and joins are evaluated in device coordinates as well. -->
+    <polyline points="10,55 30,75 50,55" fill="none" stroke="red" stroke-width="4"
+              stroke-linecap="round" stroke-linejoin="round"
+              vector-effect="non-scaling-stroke"/>
+    <!-- Dash lengths are constant in device coordinates. -->
+    <line x1="5" y1="90" x2="90" y2="90" stroke="blue" stroke-width="3"
+          stroke-dasharray="6 4" vector-effect="non-scaling-stroke"/>
+  </g>
+</svg>

@@ -892,6 +892,7 @@ fn is_non_inheritable(id: AId) -> bool {
             | AId::TextDecoration
             | AId::Transform
             | AId::TransformOrigin
+            | AId::VectorEffect
     )
 }
 

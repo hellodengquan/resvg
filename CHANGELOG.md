@@ -10,6 +10,11 @@ This changelog also contains important changes in dependencies.
 
 ### Added
 
+- Support for `vector-effect="non-scaling-stroke"`. The stroke width, dash lengths, line caps and
+  line joins are now computed in device coordinates, so the stroke keeps a constant thickness
+  regardless of the transforms applied to the element and its ancestors, while its geometry still
+  follows the transformed path and gradient/pattern paints keep using the original user-space
+  mapping. `usvg::Stroke::non_scaling`.
 - `color-interpolation` on gradients: `linearRGB` interpolates the stops in linear light.
   `usvg::BaseGradient::color_interpolation`. (#1229)
 - `color-interpolation` on masks: `linearRGB` computes the luminance of a luminance mask in linear light.

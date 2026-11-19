@@ -1008,6 +1008,8 @@ use crate::render;
 #[test] fn painting_stroke_width_negative() { assert_eq!(render("tests/painting/stroke-width/negative"), 0); }
 #[test] fn painting_stroke_width_percentage() { assert_eq!(render("tests/painting/stroke-width/percentage"), 0); }
 #[test] fn painting_stroke_width_zero() { assert_eq!(render("tests/painting/stroke-width/zero"), 0); }
+#[test] fn painting_vector_effect_non_scaling_stroke_nested() { assert_eq!(render("tests/painting/vector-effect/non-scaling-stroke-nested"), 0); }
+#[test] fn painting_vector_effect_non_scaling_stroke() { assert_eq!(render("tests/painting/vector-effect/non-scaling-stroke"), 0); }
 #[test] fn painting_visibility_bbox_impact_1() { assert_eq!(render("tests/painting/visibility/bbox-impact-1"), 0); }
 #[test] fn painting_visibility_bbox_impact_2() { assert_eq!(render("tests/painting/visibility/bbox-impact-2"), 0); }
 #[test] fn painting_visibility_bbox_impact_3() { assert_eq!(render("tests/painting/visibility/bbox-impact-3"), 0); }

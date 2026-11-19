@@ -110,9 +110,90 @@ fn stroke_path(
     paint.anti_alias = path.rendering_mode().use_shape_antialiasing();
     paint.blend_mode = blend_mode;
 
-    pixmap.stroke_path(path.data(), &paint, &stroke.to_tiny_skia(), transform, None);
+    if stroke.non_scaling() {
+        stroke_path_non_scaling(path, stroke, &paint, transform, pixmap);
+    } else {
+        pixmap.stroke_path(path.data(), &paint, &stroke.to_tiny_skia(), transform, None);
+    }
 
     Some(())
+}
+
+/// Renders a `vector-effect="non-scaling-stroke"` path.
+///
+/// The stroke geometry still follows the transformed path, but the stroke
+/// width, dash lengths, line caps and line joins are computed in the final
+/// device coordinates instead of the user space.
+///
+/// The path is stroked in user space with its width and dash intervals
+/// divided by the render transform's linear scale, which cancels the
+/// scaling/skew effect once the full transform is applied afterwards.
+/// For non-uniform transforms a single factor is used (the scale of the
+/// inverse linear part), so the stroke keeps a uniform, orientation
+/// independent thickness instead of being distorted by either axis. The
+/// paint (gradient or pattern) keeps being mapped through the full
+/// transform, exactly like for the path fill.
+fn stroke_path_non_scaling(
+    path: &usvg::Path,
+    stroke: &usvg::Stroke,
+    paint: &tiny_skia::Paint,
+    transform: tiny_skia::Transform,
+    pixmap: &mut tiny_skia::PixmapMut,
+) {
+    // Keep only the linear (scale/skew/rotate) part of the render transform.
+    // Its inverse provides the factor by which the stroke style has to be
+    // scaled down so that it remains constant in device coordinates.
+    let linear = tiny_skia::Transform::from_row(
+        transform.sx,
+        transform.ky,
+        transform.kx,
+        transform.sy,
+        0.0,
+        0.0,
+    );
+    let Some(inv_linear) = linear.invert() else {
+        log::warn!("non-scaling stroke: failed to invert the transform");
+        return;
+    };
+
+    let mut skia_stroke = stroke.to_tiny_skia();
+    let scale = inv_linear.get_scale().0;
+    skia_stroke.width *= scale;
+
+    // Dashing has to be performed explicitly (just like `Pixmap::stroke_path`
+    // does internally), because `Path::stroke` only outlines an already
+    // dashed path. The dash intervals are scaled down together with the
+    // width, so they keep their length in device coordinates.
+    let dashed_path;
+    let path_to_stroke = if let Some(dasharray) = stroke.dasharray() {
+        let array = dasharray.iter().map(|v| v * scale).collect();
+        let Some(dash) = tiny_skia::StrokeDash::new(array, stroke.dashoffset() * scale) else {
+            log::warn!("non-scaling stroke: failed to build the dash array");
+            return;
+        };
+        let Some(path) = path.data().dash(&dash, 1.0) else {
+            log::warn!("non-scaling stroke: path dashing failed");
+            return;
+        };
+        dashed_path = path;
+        &dashed_path
+    } else {
+        path.data()
+    };
+    skia_stroke.dash = None;
+
+    let Some(stroked_path) = path_to_stroke.stroke(&skia_stroke, 1.0) else {
+        log::warn!("path stroking failed");
+        return;
+    };
+
+    pixmap.fill_path(
+        &stroked_path,
+        paint,
+        tiny_skia::FillRule::Winding,
+        transform,
+        None,
+    );
 }
 
 fn convert_linear_gradient(

@@ -599,6 +599,8 @@ pub struct Stroke {
     // Whether the current stroke needs to be resolved relative
     // to a context element.
     pub(crate) context_element: Option<ContextElement>,
+    /// `vector-effect="non-scaling-stroke"` in SVG.
+    pub(crate) non_scaling: bool,
 }
 
 impl Stroke {
@@ -640,6 +642,16 @@ impl Stroke {
     /// Stroke linejoin.
     pub fn linejoin(&self) -> LineJoin {
         self.linejoin
+    }
+
+    /// Whether the stroke has a `vector-effect="non-scaling-stroke"` set.
+    ///
+    /// When set, the stroke width, line caps and line joins are computed
+    /// in the final device coordinates and are not affected by the
+    /// transformations of the element and its ancestors, while the stroke
+    /// geometry still follows the original path.
+    pub fn non_scaling(&self) -> bool {
+        self.non_scaling
     }
 
     /// Converts into a `tiny_skia_path::Stroke` type.
@@ -1488,6 +1500,17 @@ impl Path {
             .get_or_init(|| {
                 if self.stroke.is_none() {
                     self.abs_bounding_box()
+                } else if self
+                    .stroke
+                    .as_ref()
+                    .is_some_and(|stroke| stroke.non_scaling)
+                {
+                    // A non-scaling stroke has a constant width in canvas (device)
+                    // coordinates, so it cannot be calculated by simply transforming
+                    // the user-space stroke bbox. Stroke the path in canvas coordinates
+                    // with the original, untransformed stroke style instead.
+                    Path::calculate_stroke_bbox(self.stroke.as_ref(), &self.abs_data()?)
+                        .or_else(|| self.abs_bounding_box())
                 } else if self.abs_transform.has_skew() {
                     Path::calculate_stroke_bbox(self.stroke.as_ref(), &self.abs_data()?)
                         .or_else(|| self.abs_bounding_box())
@@ -2025,5 +2048,33 @@ mod tests {
             </svg>"#,
         );
         assert_no_bounding_boxes(tree.root());
+    }
+
+    #[test]
+    fn non_scaling_stroke_bounding_box_uses_device_width() {
+        // A 10x10 rect, stroked with width 2 and scaled by 4.
+        // A regular stroke bbox is expanded by 8 user units (width * scale),
+        // while a non-scaling stroke is expanded by only the 2 device units.
+        let tree = parse(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">
+                <g transform="scale(4)">
+                    <rect x="10" y="10" width="10" height="10" fill="none"
+                          stroke="black" stroke-width="2" vector-effect="non-scaling-stroke"/>
+                </g>
+            </svg>"#,
+        );
+
+        let Node::Group(group) = &tree.root().children()[0] else {
+            panic!("expected a group");
+        };
+        let Node::Path(path) = &group.children[0] else {
+            panic!("expected a path");
+        };
+
+        let bbox = path.abs_stroke_bounding_box().unwrap();
+        assert!(bbox.left().approx_eq_ulps(&39.0, 4), "{}", bbox.left());
+        assert!(bbox.top().approx_eq_ulps(&39.0, 4), "{}", bbox.top());
+        assert!(bbox.right().approx_eq_ulps(&81.0, 4), "{}", bbox.right());
+        assert!(bbox.bottom().approx_eq_ulps(&81.0, 4), "{}", bbox.bottom());
     }
 }

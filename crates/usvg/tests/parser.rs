@@ -770,3 +770,63 @@ fn long_clip_path_chain() {
 
     assert!(usvg::Tree::from_str(&svg, &usvg::Options::default()).is_ok());
 }
+
+#[test]
+fn non_scaling_stroke_flag_is_parsed() {
+    let svg = "<svg xmlns='http://www.w3.org/2000/svg'>
+        <g transform='scale(2)'>
+            <path d='M0 0 L10 10' stroke='black' vector-effect='non-scaling-stroke'/>
+            <path d='M0 0 L10 10' stroke='black'/>
+        </g>
+    </svg>";
+
+    let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).unwrap();
+    let group = &tree.root().children()[0];
+    let usvg::Node::Group(group) = group else {
+        panic!("expected a group");
+    };
+
+    let usvg::Node::Path(first) = &group.children()[0] else {
+        panic!("expected a path");
+    };
+    assert!(first.stroke().unwrap().non_scaling());
+
+    let usvg::Node::Path(second) = &group.children()[1] else {
+        panic!("expected a path");
+    };
+    assert!(!second.stroke().unwrap().non_scaling());
+}
+
+#[test]
+fn non_scaling_stroke_is_not_inherited() {
+    let svg = "<svg xmlns='http://www.w3.org/2000/svg'>
+        <g vector-effect='non-scaling-stroke'>
+            <path d='M0 0 L10 10' stroke='black'/>
+        </g>
+    </svg>";
+
+    let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).unwrap();
+    let group = &tree.root().children()[0];
+    let usvg::Node::Group(group) = group else {
+        panic!("expected a group");
+    };
+    let usvg::Node::Path(path) = &group.children()[0] else {
+        panic!("expected a path");
+    };
+    assert!(!path.stroke().unwrap().non_scaling());
+}
+
+#[test]
+fn non_scaling_stroke_accepts_extra_keywords() {
+    // The value is a space-separated list; unknown keywords must be tolerated.
+    let svg = "<svg xmlns='http://www.w3.org/2000/svg'>
+        <path d='M0 0 L10 10' stroke='black'
+              vector-effect='non-scaling-stroke some-unknown-keyword'/>
+    </svg>";
+
+    let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).unwrap();
+    let usvg::Node::Path(path) = &tree.root().children()[0] else {
+        panic!("expected a path");
+    };
+    assert!(path.stroke().unwrap().non_scaling());
+}
