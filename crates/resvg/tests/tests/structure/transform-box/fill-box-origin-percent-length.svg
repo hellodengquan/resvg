@@ -1,0 +1,9 @@
+<svg id="svg1" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+    <title>fill-box with percent and length transform-origin</title>
+
+    <rect id="rect1" x="60" y="60" width="80" height="80" fill="green"
+          transform="rotate(45)" transform-box="fill-box" transform-origin="25% 10px"/>
+
+    <!-- image frame -->
+    <rect id="frame" x="1" y="1" width="198" height="198" fill="none" stroke="black"/>
+</svg>

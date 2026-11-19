@@ -770,3 +770,327 @@ fn long_clip_path_chain() {
 
     assert!(usvg::Tree::from_str(&svg, &usvg::Options::default()).is_ok());
 }
+
+fn assert_transform_eq(actual: usvg::Transform, expected: usvg::Transform) {
+    let eps = 1e-3;
+    assert!(
+        (actual.sx - expected.sx).abs() < eps
+            && (actual.kx - expected.kx).abs() < eps
+            && (actual.ky - expected.ky).abs() < eps
+            && (actual.sy - expected.sy).abs() < eps
+            && (actual.tx - expected.tx).abs() < eps
+            && (actual.ty - expected.ty).abs() < eps,
+        "expected {:?}, got {:?}",
+        expected,
+        actual
+    );
+}
+
+fn first_group_transform(svg: &str) -> usvg::Transform {
+    let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).unwrap();
+    let usvg::Node::Group(group) = &tree.root().children()[0] else {
+        unreachable!()
+    };
+    group.transform()
+}
+
+#[test]
+fn transform_box_fill_box_on_shape() {
+    // The bbox of the rect is (60, 60, 80, 80), so `transform-origin: center`
+    // resolves to (100, 100) and not to the viewport center.
+    let svg = "
+    <svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'>
+        <rect x='60' y='60' width='80' height='80' transform='scale(2)'
+              transform-box='fill-box' transform-origin='center'/>
+    </svg>
+    ";
+
+    // translate(100, 100) * scale(2) * translate(-100, -100)
+    assert_transform_eq(
+        first_group_transform(svg),
+        usvg::Transform::from_row(2.0, 0.0, 0.0, 2.0, -100.0, -100.0),
+    );
+}
+
+#[test]
+fn transform_box_fill_box_default_origin() {
+    // Without `transform-origin`, the origin is (0, 0) of the fill box,
+    // i.e. the bbox top-left corner (60, 60), and not the viewport origin.
+    let svg = "
+    <svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'>
+        <rect x='60' y='60' width='80' height='80' transform='scale(2)'
+              transform-box='fill-box'/>
+    </svg>
+    ";
+
+    // translate(60, 60) * scale(2) * translate(-60, -60)
+    assert_transform_eq(
+        first_group_transform(svg),
+        usvg::Transform::from_row(2.0, 0.0, 0.0, 2.0, -60.0, -60.0),
+    );
+}
+
+#[test]
+fn transform_box_view_box_is_the_default() {
+    // `view-box` (explicit or implicit) resolves the origin against the
+    // viewport, so `0 0` results in no origin adjustment at all.
+    let svg_implicit = "
+    <svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'>
+        <rect x='60' y='60' width='80' height='80' transform='scale(2)'
+              transform-origin='0 0'/>
+    </svg>
+    ";
+    let svg_explicit = "
+    <svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'>
+        <rect x='60' y='60' width='80' height='80' transform='scale(2)'
+              transform-box='view-box' transform-origin='0 0'/>
+    </svg>
+    ";
+
+    assert_transform_eq(
+        first_group_transform(svg_implicit),
+        usvg::Transform::from_scale(2.0, 2.0),
+    );
+    assert_transform_eq(
+        first_group_transform(svg_explicit),
+        usvg::Transform::from_scale(2.0, 2.0),
+    );
+}
+
+#[test]
+fn transform_box_view_box_origin_percentages_use_viewport() {
+    // With `view-box`, percentages are resolved against the viewport (200x200),
+    // so `center` is (100, 100) even though the bbox center is (100, 100) too...
+    // use a non-centered origin to tell them apart: 25% -> 50 (viewport)
+    // instead of 60 + 0.25 * 80 = 80 (fill box).
+    let svg = "
+    <svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'>
+        <rect x='60' y='60' width='80' height='80' transform='scale(2)'
+              transform-box='view-box' transform-origin='25% 25%'/>
+    </svg>
+    ";
+
+    // translate(50, 50) * scale(2) * translate(-50, -50)
+    assert_transform_eq(
+        first_group_transform(svg),
+        usvg::Transform::from_row(2.0, 0.0, 0.0, 2.0, -50.0, -50.0),
+    );
+}
+
+#[test]
+fn transform_box_fill_box_origin_percentages_and_lengths() {
+    // 25% of the bbox width (80) is 20 and 10px is 10, so the origin is
+    // (60 + 20, 60 + 10) = (80, 70).
+    let svg = "
+    <svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'>
+        <rect x='60' y='60' width='80' height='80' transform='scale(2)'
+              transform-box='fill-box' transform-origin='25% 10px'/>
+    </svg>
+    ";
+
+    // translate(80, 70) * scale(2) * translate(-80, -70)
+    assert_transform_eq(
+        first_group_transform(svg),
+        usvg::Transform::from_row(2.0, 0.0, 0.0, 2.0, -80.0, -70.0),
+    );
+}
+
+#[test]
+fn transform_box_fill_box_origin_keywords() {
+    // `right bottom` is the bbox's (140, 140) corner.
+    let svg = "
+    <svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'>
+        <rect x='60' y='60' width='80' height='80' transform='scale(2)'
+              transform-box='fill-box' transform-origin='right bottom'/>
+    </svg>
+    ";
+
+    // translate(140, 140) * scale(2) * translate(-140, -140)
+    assert_transform_eq(
+        first_group_transform(svg),
+        usvg::Transform::from_row(2.0, 0.0, 0.0, 2.0, -140.0, -140.0),
+    );
+}
+
+#[test]
+fn transform_box_stroke_box_on_shape() {
+    // The stroke bbox of the rect is (55, 55, 90, 90).
+    let svg = "
+    <svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'>
+        <rect x='60' y='60' width='80' height='80' stroke-width='10' stroke='black'
+              transform='scale(2)' transform-box='stroke-box' transform-origin='0 0'/>
+    </svg>
+    ";
+
+    // translate(55, 55) * scale(2) * translate(-55, -55)
+    assert_transform_eq(
+        first_group_transform(svg),
+        usvg::Transform::from_row(2.0, 0.0, 0.0, 2.0, -55.0, -55.0),
+    );
+}
+
+#[test]
+fn transform_box_aliases() {
+    // `content-box` is an alias of `fill-box` and `border-box` is an alias
+    // of `stroke-box` for SVG elements.
+    let fill_box = "
+    <svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'>
+        <rect x='60' y='60' width='80' height='80' stroke-width='10' stroke='black'
+              transform='scale(2)' transform-box='fill-box' transform-origin='0 0'/>
+    </svg>
+    ";
+    let content_box = "
+    <svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'>
+        <rect x='60' y='60' width='80' height='80' stroke-width='10' stroke='black'
+              transform='scale(2)' transform-box='content-box' transform-origin='0 0'/>
+    </svg>
+    ";
+    let stroke_box = "
+    <svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'>
+        <rect x='60' y='60' width='80' height='80' stroke-width='10' stroke='black'
+              transform='scale(2)' transform-box='stroke-box' transform-origin='0 0'/>
+    </svg>
+    ";
+    let border_box = "
+    <svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'>
+        <rect x='60' y='60' width='80' height='80' stroke-width='10' stroke='black'
+              transform='scale(2)' transform-box='border-box' transform-origin='0 0'/>
+    </svg>
+    ";
+
+    assert_transform_eq(
+        first_group_transform(content_box),
+        first_group_transform(fill_box),
+    );
+    assert_transform_eq(
+        first_group_transform(border_box),
+        first_group_transform(stroke_box),
+    );
+    // And the aliases must not be confused with each other.
+    let fill = first_group_transform(fill_box);
+    let stroke = first_group_transform(stroke_box);
+    assert!((fill.tx - stroke.tx).abs() > 1.0);
+}
+
+#[test]
+fn transform_box_fill_box_on_group() {
+    // The bbox of the group is (0, 0, 30, 10), so `center` is (15, 5).
+    let svg = "
+    <svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'>
+        <g transform='scale(2)' transform-box='fill-box' transform-origin='center'>
+            <rect x='0' y='0' width='10' height='10'/>
+            <rect x='20' y='0' width='10' height='10'/>
+        </g>
+    </svg>
+    ";
+
+    // translate(15, 5) * scale(2) * translate(-15, -5)
+    assert_transform_eq(
+        first_group_transform(svg),
+        usvg::Transform::from_row(2.0, 0.0, 0.0, 2.0, -15.0, -5.0),
+    );
+}
+
+#[test]
+fn transform_box_fill_box_on_use() {
+    // The bbox of the generated content is (20, 30, 100, 100) because of the
+    // `x`/`y` offsets, so `center` is (70, 80). The `use` x/y translation is
+    // appended after the element's transform.
+    let svg = "
+    <svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'
+         xmlns:xlink='http://www.w3.org/1999/xlink'>
+        <defs>
+            <rect id='rect1' x='0' y='0' width='100' height='100'/>
+        </defs>
+        <use xlink:href='#rect1' x='20' y='30' transform='scale(2)'
+             transform-box='fill-box' transform-origin='center'/>
+    </svg>
+    ";
+
+    // translate(70, 80) * scale(2) * translate(-70, -80) * translate(20, 30)
+    // = scale(2) translated by (2 * 20 - 70, 2 * 30 - 80)
+    assert_transform_eq(
+        first_group_transform(svg),
+        usvg::Transform::from_row(2.0, 0.0, 0.0, 2.0, -30.0, -20.0),
+    );
+}
+
+#[test]
+fn transform_box_fill_box_on_text() {
+    let svg = "
+    <svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'>
+        <text x='50' y='100' transform='scale(2)' transform-box='fill-box'
+              transform-origin='center'>Text</text>
+    </svg>
+    ";
+
+    let mut opts = usvg::Options::default();
+    opts.fontdb_mut()
+        .load_fonts_dir(env!("CARGO_MANIFEST_DIR").to_string() + "/../resvg/tests/fonts");
+    opts.font_family = "Noto Sans".to_string();
+
+    let tree = usvg::Tree::from_str(svg, &opts).unwrap();
+    let usvg::Node::Group(group) = &tree.root().children()[0] else {
+        unreachable!()
+    };
+    let usvg::Node::Text(text) = &group.children()[0] else {
+        unreachable!()
+    };
+
+    // The origin must have been resolved against the text's own bounding box.
+    let bbox = text.bounding_box();
+    let cx = bbox.x() + bbox.width() / 2.0;
+    let cy = bbox.y() + bbox.height() / 2.0;
+    assert_transform_eq(
+        group.transform(),
+        usvg::Transform::from_row(2.0, 0.0, 0.0, 2.0, -cx, -cy),
+    );
+}
+
+#[test]
+fn transform_box_via_css() {
+    // `transform-box` must be resolved both from the `style` attribute and
+    // from style sheets.
+    let svg = "
+    <svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'>
+        <style>
+            #rect2 { transform-box: fill-box; }
+        </style>
+        <rect id='rect1' x='60' y='60' width='80' height='80' transform='scale(2)'
+              style='transform-box: fill-box' transform-origin='0 0'/>
+        <rect id='rect2' x='60' y='60' width='80' height='80' transform='scale(2)'
+              transform-origin='0 0'/>
+    </svg>
+    ";
+
+    let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).unwrap();
+    for child in tree.root().children() {
+        let usvg::Node::Group(group) = child else {
+            unreachable!()
+        };
+        // translate(60, 60) * scale(2) * translate(-60, -60)
+        assert_transform_eq(
+            group.transform(),
+            usvg::Transform::from_row(2.0, 0.0, 0.0, 2.0, -60.0, -60.0),
+        );
+    }
+}
+
+#[test]
+fn transform_box_fill_box_rotation() {
+    // Same as `transform_box_fill_box_on_shape`, but with a rotation to
+    // cover non-scale transforms.
+    let svg = "
+    <svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'>
+        <rect x='60' y='60' width='80' height='80' transform='rotate(90)'
+              transform-box='fill-box' transform-origin='center'/>
+    </svg>
+    ";
+
+    // translate(100, 100) * rotate(90) * translate(-100, -100)
+    // Note: `Transform::from_row` takes (sx, ky, kx, sy, tx, ty).
+    assert_transform_eq(
+        first_group_transform(svg),
+        usvg::Transform::from_row(0.0, 1.0, -1.0, 0.0, 200.0, 0.0),
+    );
+}

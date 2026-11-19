@@ -686,6 +686,80 @@ impl<'a, 'input: 'a> FromValue<'a, 'input> for Isolation {
     }
 }
 
+/// The CSS [`transform-box`](https://drafts.csswg.org/css-transforms/#transform-box)
+/// property.
+///
+/// Defines the reference box the `transform-origin` is resolved against.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+#[allow(clippy::enum_variant_names)] // variant names mirror the CSS keywords
+pub(crate) enum TransformBox {
+    /// The nearest SVG viewport is used as the reference box. (default)
+    #[default]
+    ViewBox,
+    /// The element's geometric (fill) bounding box is used as the reference box.
+    FillBox,
+    /// The element's stroke bounding box is used as the reference box.
+    StrokeBox,
+}
+
+impl TransformBox {
+    /// Whether the reference box is the element's own bounding box, meaning
+    /// it has to be computed before the element's transform can be resolved.
+    pub(crate) fn needs_bounding_box(&self) -> bool {
+        !matches!(self, Self::ViewBox)
+    }
+
+    /// Computes the reference box of an already converted element.
+    pub(crate) fn bounding_box_of(&self, group: &Group) -> Option<Rect> {
+        match self {
+            Self::ViewBox => None,
+            Self::FillBox => group.bounding_box(),
+            Self::StrokeBox => group.stroke_bounding_box(),
+        }
+    }
+}
+
+impl<'a, 'input: 'a> FromValue<'a, 'input> for TransformBox {
+    fn parse(_: SvgNode, _: AId, value: &str) -> Option<Self> {
+        match value {
+            "view-box" => Some(Self::ViewBox),
+            // For SVG elements without an associated CSS layout box,
+            // the used value of `content-box` is `fill-box`.
+            "fill-box" | "content-box" => Some(Self::FillBox),
+            // For SVG elements without an associated CSS layout box,
+            // the used value of `border-box` is `stroke-box`.
+            "stroke-box" | "border-box" => Some(Self::StrokeBox),
+            _ => None,
+        }
+    }
+}
+
+/// Resolves the element's `transform` while taking the CSS `transform-box`
+/// property into account.
+///
+/// When `transform-box` references the element's own bounding box
+/// (`fill-box`/`stroke-box` and their aliases), `bounding_box` is invoked to
+/// compute that box in the element's local user space, i.e. without the
+/// element's own transform applied. Otherwise the transform is resolved
+/// exactly as before, against the SVG viewport.
+pub(crate) fn resolve_transform_boxed(
+    node: SvgNode,
+    state: &State,
+    cache: &mut Cache,
+    bounding_box: &dyn Fn(&mut Cache, TransformBox) -> Option<Rect>,
+) -> Transform {
+    let transform_box: TransformBox = node.attribute(AId::TransformBox).unwrap_or_default();
+    if transform_box.needs_bounding_box()
+        && (node.has_attribute(AId::Transform) || node.has_attribute(AId::TransformOrigin))
+    {
+        if let Some(bbox) = bounding_box(cache, transform_box) {
+            return node.resolve_transform_with_box(AId::Transform, state, bbox);
+        }
+    }
+
+    node.resolve_transform(AId::Transform, state)
+}
+
 // TODO: explain
 pub(crate) fn convert_group(
     node: SvgNode,
@@ -707,8 +781,22 @@ pub(crate) fn convert_group(
     let transform = if is_root_svg {
         // Already applied outside the viewBox mapping in `convert_doc`.
         Transform::default()
-    } else {
+    } else if node.tag_name() == Some(EId::Use) {
+        // The transform of a `use` element is resolved in `use_node::convert`,
+        // because its bounding box depends on the referenced content.
+        // The value computed here is discarded by the callers anyway.
         node.resolve_transform(AId::Transform, state)
+    } else {
+        resolve_transform_boxed(node, state, cache, &|cache, transform_box| {
+            // Convert the children with an identity transform to measure the
+            // element's bounding box in its local user space.
+            let mut probe = Group {
+                abs_transform: parent.abs_transform,
+                ..Group::empty()
+            };
+            collect_children(cache, &mut probe);
+            transform_box.bounding_box_of(&probe)
+        })
     };
     let blend_mode: BlendMode = node.attribute(AId::MixBlendMode).unwrap_or_default();
     let isolation: Isolation = node.attribute(AId::Isolation).unwrap_or_default();
@@ -985,6 +1073,30 @@ pub fn svg_paint_order_to_usvg(order: svgtypes::PaintOrder) -> PaintOrder {
 
 impl SvgNode<'_, '_> {
     pub(crate) fn resolve_transform(&self, transform_aid: AId, state: &State) -> Transform {
+        self.resolve_transform_impl(transform_aid, state, None)
+    }
+
+    /// Resolves the element's transform with the `transform-origin` resolved
+    /// against the given reference box (selected via the CSS `transform-box`
+    /// property) instead of the SVG viewport.
+    ///
+    /// `bbox` is the element's bounding box in its local user space, i.e.
+    /// without the element's own transform applied.
+    pub(crate) fn resolve_transform_with_box(
+        &self,
+        transform_aid: AId,
+        state: &State,
+        bbox: Rect,
+    ) -> Transform {
+        self.resolve_transform_impl(transform_aid, state, Some(bbox))
+    }
+
+    fn resolve_transform_impl(
+        &self,
+        transform_aid: AId,
+        state: &State,
+        bbox: Option<Rect>,
+    ) -> Transform {
         let mut transform: Transform = self.attribute(transform_aid).unwrap_or_default();
         let transform_origin = self
             .attribute::<TransformOrigin>(AId::TransformOrigin)
@@ -1001,21 +1113,27 @@ impl SvgNode<'_, '_> {
                 }
             });
 
-        if let Some(transform_origin) = transform_origin {
-            let dx = convert_length(
-                transform_origin.x_offset,
-                *self,
-                AId::Width,
-                Units::UserSpaceOnUse,
-                state,
-            );
-            let dy = convert_length(
-                transform_origin.y_offset,
-                *self,
-                AId::Height,
-                Units::UserSpaceOnUse,
-                state,
-            );
+        // When a reference box is given, the origin is resolved against it
+        // even when `transform-origin` is not set, because the initial
+        // `transform-origin` of (0, 0) then maps to the reference box's
+        // top-left corner and not to the viewport origin.
+        if transform_origin.is_some() || bbox.is_some() {
+            let (x_offset, y_offset) = transform_origin
+                .map(|origin| (origin.x_offset, origin.y_offset))
+                .unwrap_or((Length::zero(), Length::zero()));
+
+            let (dx, dy) = match bbox {
+                Some(bbox) => (
+                    bbox.x()
+                        + convert_origin_length(x_offset, *self, AId::Width, bbox.width(), state),
+                    bbox.y()
+                        + convert_origin_length(y_offset, *self, AId::Height, bbox.height(), state),
+                ),
+                None => (
+                    convert_length(x_offset, *self, AId::Width, Units::UserSpaceOnUse, state),
+                    convert_length(y_offset, *self, AId::Height, Units::UserSpaceOnUse, state),
+                ),
+            };
             transform = Transform::default()
                 .pre_translate(dx, dy)
                 .pre_concat(transform)
@@ -1023,5 +1141,25 @@ impl SvgNode<'_, '_> {
         }
 
         transform
+    }
+}
+
+/// Resolves a single `transform-origin` component against the given
+/// reference box dimension.
+///
+/// Percentages and keywords (already converted to percentages during parsing)
+/// are relative to the reference box, while absolute lengths are resolved
+/// against the user space, exactly like for the viewport reference box.
+fn convert_origin_length(
+    length: Length,
+    node: SvgNode,
+    aid: AId,
+    reference: f32,
+    state: &State,
+) -> f32 {
+    if length.unit == Unit::Percent {
+        reference * (length.number as f32) / 100.0
+    } else {
+        convert_length(length, node, aid, Units::UserSpaceOnUse, state)
     }
 }

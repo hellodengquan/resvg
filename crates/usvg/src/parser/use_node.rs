@@ -16,6 +16,37 @@ pub(crate) fn convert(
     cache: &mut converter::Cache,
     parent: &mut Group,
 ) {
+    // When `transform-box` references the element's own bounding box, the
+    // transform origin of the `use` element has to be resolved against the
+    // bounding box of the generated content. Measure it by converting the
+    // content once without the element's own transform.
+    let transform_box: converter::TransformBox =
+        node.attribute(AId::TransformBox).unwrap_or_default();
+    if transform_box.needs_bounding_box()
+        && (node.has_attribute(AId::Transform) || node.has_attribute(AId::TransformOrigin))
+    {
+        let mut probe = Group {
+            abs_transform: parent.abs_transform,
+            ..Group::empty()
+        };
+        convert_impl(node, state, cache, &mut probe, Some(Transform::default()));
+        if let Some(bbox) = transform_box.bounding_box_of(&probe) {
+            let transform = node.resolve_transform_with_box(AId::Transform, state, bbox);
+            convert_impl(node, state, cache, parent, Some(transform));
+            return;
+        }
+    }
+
+    convert_impl(node, state, cache, parent, None);
+}
+
+fn convert_impl(
+    node: SvgNode,
+    state: &converter::State,
+    cache: &mut converter::Cache,
+    parent: &mut Group,
+    transform_override: Option<Transform>,
+) {
     let child = match node.first_child() {
         Some(v) => v,
         None => return,
@@ -41,7 +72,8 @@ pub(crate) fn convert(
     ));
 
     // We require an original transformation to setup 'clipPath'.
-    let mut orig_ts = node.resolve_transform(AId::Transform, state);
+    let mut orig_ts =
+        transform_override.unwrap_or_else(|| node.resolve_transform(AId::Transform, state));
 
     let x = node.convert_user_length(AId::X, &use_state, Length::zero());
     let y = node.convert_user_length(AId::Y, &use_state, Length::zero());
